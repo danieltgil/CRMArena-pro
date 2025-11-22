@@ -1,0 +1,42 @@
+# Environment and secrets
+.env
+.env.example
+
+# Python cache
+*.pyc
+__pycache__/
+*.egg-info
+.eggs/
+dist/
+build/
+
+# Git
+.git/
+.gitignore
+.github/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Output directories
+logs/
+results/
+*.log
+
+# Documentation (not needed in container)
+*.md
+examples/
+docs/
+
+# Test files
+test_functions/
+*.test.py
+
+# macOS
+.DS_Store
+
+# Large data files (loaded from HuggingFace instead)
+local_data/*.db

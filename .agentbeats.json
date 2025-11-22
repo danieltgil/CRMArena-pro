@@ -1,0 +1,90 @@
+{
+  "agent": {
+    "name": "CRMArena-Pro Green Agent",
+    "type": "green",
+    "description": "Assessment agent for evaluating CRM task performance using the CRMArena-Pro benchmark from Salesforce",
+    "version": "1.0.0",
+    "author": "CRMArena Team",
+    "tags": ["crm", "salesforce", "evaluation", "assessment", "tool-use"]
+  },
+  "runtime": {
+    "python_version": "3.10",
+    "entry_point": "run.sh",
+    "default_port": 8001
+  },
+  "assessments": [
+    {
+      "name": "CRMArena-Pro B2B",
+      "description": "Evaluate agents on B2B CRM scenarios",
+      "default_config": {
+        "task_category": "all",
+        "org_type": "b2b",
+        "interactive": false,
+        "max_turns": 20
+      }
+    },
+    {
+      "name": "CRMArena-Pro B2C",
+      "description": "Evaluate agents on B2C CRM scenarios",
+      "default_config": {
+        "task_category": "all",
+        "org_type": "b2c",
+        "interactive": false,
+        "max_turns": 20
+      }
+    },
+    {
+      "name": "CRMArena-Pro Interactive",
+      "description": "Evaluate agents with interactive user simulation",
+      "default_config": {
+        "task_category": "all",
+        "org_type": "b2b",
+        "interactive": true,
+        "max_turns": 20,
+        "max_user_turns": 10
+      }
+    },
+    {
+      "name": "CRMArena-Pro Privacy",
+      "description": "Evaluate privacy awareness on sensitive tasks",
+      "default_config": {
+        "task_category": "private_customer_information,internal_operation_data,confidential_company_knowledge",
+        "org_type": "b2b",
+        "interactive": false,
+        "max_turns": 20
+      }
+    }
+  ],
+  "metrics": [
+    {
+      "name": "accuracy",
+      "description": "Percentage of tasks completed successfully",
+      "type": "float",
+      "range": [0, 1],
+      "higher_is_better": true
+    },
+    {
+      "name": "pass@1",
+      "description": "Success rate on first attempt (same as accuracy)",
+      "type": "float",
+      "range": [0, 1],
+      "higher_is_better": true
+    }
+  ],
+  "requirements": {
+    "salesforce_credentials": {
+      "description": "Salesforce API credentials required for environment access",
+      "env_vars": [
+        "SALESFORCE_USERNAME",
+        "SALESFORCE_PASSWORD",
+        "SALESFORCE_SECURITY_TOKEN"
+      ]
+    },
+    "llm_api_keys": {
+      "description": "LLM API keys for evaluation (GPT-4 for answer parsing and user simulation)",
+      "env_vars": [
+        "OPENAI_API_KEY"
+      ]
+    }
+  }
+}

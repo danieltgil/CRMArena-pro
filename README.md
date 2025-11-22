@@ -31,6 +31,7 @@ This repo contains the evaluation code for the paper "<a href="https://arxiv.org
 
 ## 🔔News
 
+- **🚀 [2025-01] CRMArena-Pro now supports AgentBeats! Run standardized, reproducible evaluations with the A2A protocol. [See Quick Start →](QUICKSTART_AGENTBEATS.md)**
 - **🌟 [2025-05] Introducing [CRMArena-Pro](https://arxiv.org/abs/2505.18878) - a major expansion of the original CRMArena featuring enhanced support for diverse business applications, industry types, and interactive scenarios! 🚀**
 - **🎉 [2024-01] CRMArena has been accepted by NAACL 2025!**
 
@@ -38,8 +39,31 @@ This repo contains the evaluation code for the paper "<a href="https://arxiv.org
 
 **Note: This repository is for research purposes only and not for commerical.**
 
+## 🤖 AgentBeats Integration
 
-## Quickstart
+CRMArena-Pro now supports the **AgentBeats** platform for standardized agent evaluation! This enables:
+
+- ✅ **Standardized Assessment** - Use the A2A protocol for interoperable evaluations
+- ✅ **Green Agent Architecture** - CRMArena-Pro acts as an assessor agent
+- ✅ **Any A2A-Compatible Agent** - Test any agent that implements the A2A protocol
+- ✅ **Reproducible Results** - Consistent, repeatable benchmarking
+
+### Quick Start with AgentBeats
+
+```bash
+# Install AgentBeats requirements
+pip install -r requirements-agentbeats.txt
+
+# Run a quick assessment (3 tasks)
+python launch_assessment.py --task-category handle_time --max-tasks 3
+```
+
+**Learn More:**
+- 📖 [AgentBeats Quick Start Guide](QUICKSTART_AGENTBEATS.md) - Get started in 5 minutes
+- 📚 [Full AgentBeats Integration Docs](AGENTBEATS_INTEGRATION.md) - Complete documentation
+- 🌐 [AgentBeats Platform](https://agentbeats.org) - Deploy and compare agents
+
+## Quickstart (Traditional Mode)
 
 ```bash
 pip install -e .
