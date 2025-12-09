@@ -18,16 +18,48 @@ from pydantic import BaseModel
 import uvicorn
 import httpx
 
-from crm_sandbox.data.assets import (
-    TASKS_B2B,
-    TASKS_B2B_INTERACTIVE,
-    TASKS_B2C,
-    TASKS_B2C_INTERACTIVE,
-    B2B_SCHEMA,
-    B2C_SCHEMA,
-    EXTERNAL_FACING_TASKS,
-)
-from crm_sandbox.env.env import ChatEnv, InteractiveChatEnv
+# Lazy imports - we'll import these only when needed to avoid slow startup
+# from crm_sandbox.data.assets import (
+#     TASKS_B2B,
+#     TASKS_B2B_INTERACTIVE,
+#     TASKS_B2C,
+#     TASKS_B2C_INTERACTIVE,
+#     B2B_SCHEMA,
+#     B2C_SCHEMA,
+#     EXTERNAL_FACING_TASKS,
+# )
+# from crm_sandbox.env.env import ChatEnv, InteractiveChatEnv
+
+# Cache for lazily loaded assets
+_assets_cache = None
+
+def get_assets():
+    """Lazily load CRM assets only when needed"""
+    global _assets_cache
+    if _assets_cache is None:
+        from crm_sandbox.data.assets import (
+            TASKS_B2B,
+            TASKS_B2B_INTERACTIVE,
+            TASKS_B2C,
+            TASKS_B2C_INTERACTIVE,
+            B2B_SCHEMA,
+            B2C_SCHEMA,
+            EXTERNAL_FACING_TASKS,
+        )
+        from crm_sandbox.env.env import ChatEnv, InteractiveChatEnv
+
+        _assets_cache = {
+            'TASKS_B2B': TASKS_B2B,
+            'TASKS_B2B_INTERACTIVE': TASKS_B2B_INTERACTIVE,
+            'TASKS_B2C': TASKS_B2C,
+            'TASKS_B2C_INTERACTIVE': TASKS_B2C_INTERACTIVE,
+            'B2B_SCHEMA': B2B_SCHEMA,
+            'B2C_SCHEMA': B2C_SCHEMA,
+            'EXTERNAL_FACING_TASKS': EXTERNAL_FACING_TASKS,
+            'ChatEnv': ChatEnv,
+            'InteractiveChatEnv': InteractiveChatEnv,
+        }
+    return _assets_cache
 
 
 # Pydantic models for requests
@@ -87,15 +119,18 @@ async def run_assessment(config: AssessmentConfig):
     """Run an assessment on a white agent"""
 
     try:
+        # Lazily load assets (this may take time on first request, but won't block startup)
+        assets = get_assets()
+
         # Load tasks
         org_type = "b2b"  # Default for now
 
         if config.interactive:
-            selected_tasks = TASKS_B2B_INTERACTIVE
-            schema = B2B_SCHEMA
+            selected_tasks = assets['TASKS_B2B_INTERACTIVE']
+            schema = assets['B2B_SCHEMA']
         else:
-            selected_tasks = TASKS_B2B
-            schema = B2B_SCHEMA
+            selected_tasks = assets['TASKS_B2B']
+            schema = assets['B2B_SCHEMA']
 
         # Filter by category
         if config.task_category != "all":
@@ -110,13 +145,13 @@ async def run_assessment(config: AssessmentConfig):
         tasks_dict = {t["idx"]: t for t in selected_tasks}
 
         if config.interactive:
-            env = InteractiveChatEnv(
+            env = assets['InteractiveChatEnv'](
                 tasks=tasks_dict,
                 max_user_turns=config.max_user_turns,
                 org_type=org_type,
             )
         else:
-            env = ChatEnv(
+            env = assets['ChatEnv'](
                 tasks=tasks_dict,
                 org_type=org_type,
             )
@@ -128,7 +163,7 @@ async def run_assessment(config: AssessmentConfig):
         async with httpx.AsyncClient(timeout=300.0) as client:
             for task in selected_tasks:
                 task_idx = task["idx"]
-                agent_type = "external" if task["task"] in EXTERNAL_FACING_TASKS else "internal"
+                agent_type = "external" if task["task"] in assets['EXTERNAL_FACING_TASKS'] else "internal"
 
                 # Create task message
                 task_message = create_task_message(task, schema, agent_type, config.max_turns)
@@ -358,7 +393,15 @@ def parse_action(response_text: str) -> Optional[Dict]:
 @app.get("/health")
 async def health():
     """Health check endpoint"""
-    return {"status": "healthy"}
+    return {"status": "healthy", "service": "crmarena-pro-green-agent"}
+
+@app.on_event("startup")
+async def startup_event():
+    """Log when the server is starting"""
+    print("=" * 60)
+    print("CRMArena-Pro Green Agent starting...")
+    print("Assets will be loaded lazily on first assessment request")
+    print("=" * 60)
 
 
 def main():
