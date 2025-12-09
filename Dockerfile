@@ -14,9 +14,8 @@ COPY . .
 # Make run.sh executable
 RUN chmod +x run.sh
 
-# Expose port (Cloud Run/Railway will set PORT env var)
+# Expose port (Cloud Run will set PORT env var)
 ENV PORT=8080
-ENV AGENT_PORT=8080
 
-# Run the AgentBeats controller
-CMD ["agentbeats", "run_ctrl"]
+# Run the green agent directly
+CMD ["./run.sh"]

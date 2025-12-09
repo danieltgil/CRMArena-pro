@@ -1,15 +1,10 @@
 # AgentBeats Integration Requirements
-# Install these in addition to the base requirements.txt
+# Simplified version without unavailable packages
 
-# A2A Protocol for agent communication
-a2a-python>=0.1.0
-
-# AgentBeats runtime and controller
-earthshaker>=0.1.0
-
-# Web server for A2A endpoints
+# Web server for agents
 uvicorn>=0.30.0
 fastapi>=0.110.0
+pydantic>=2.0.0
 
 # All base requirements from requirements.txt
 -r requirements.txt
