@@ -8,15 +8,17 @@ It implements a basic HTTP API compatible with AgentBeats.
 import json
 import os
 import traceback
+import uuid
 from typing import Dict, List, Optional, Any
 from dotenv import load_dotenv
 from datetime import datetime
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import uvicorn
 import httpx
+import asyncio
 
 # Lazy imports - we'll import these only when needed to avoid slow startup
 # from crm_sandbox.data.assets import (
@@ -62,7 +64,32 @@ def get_assets():
     return _assets_cache
 
 
-# Pydantic models for requests
+# Pydantic models for A2A protocol
+class TaskInput(BaseModel):
+    """A2A protocol task input"""
+    white_agent_url: str = Field(..., description="URL of the white agent to assess")
+    task_category: str = Field(default="all", description="Task category to evaluate")
+    max_tasks: Optional[int] = Field(default=None, description="Maximum number of tasks")
+    interactive: bool = Field(default=False, description="Whether to use interactive mode")
+    max_turns: int = Field(default=20, description="Maximum turns per task")
+    max_user_turns: int = Field(default=10, description="Maximum user turns in interactive mode")
+
+class TaskStatus(BaseModel):
+    """A2A protocol task status"""
+    status: str  # "pending", "running", "completed", "failed"
+    result: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+
+class TaskResponse(BaseModel):
+    """A2A protocol task creation response"""
+    task_id: str
+    status: str
+
+# In-memory task storage (in production, use a database)
+tasks_storage: Dict[str, TaskStatus] = {}
+tasks_results: Dict[str, Any] = {}
+
+# Pydantic models for legacy /assess endpoint
 class AssessmentConfig(BaseModel):
     white_agent_url: str
     task_category: str = "all"
@@ -114,90 +141,167 @@ async def agent_card():
     }
 
 
+@app.post("/task", response_model=TaskResponse)
+async def create_task(task_input: TaskInput):
+    """A2A protocol: Create a new assessment task"""
+    task_id = str(uuid.uuid4())
+
+    # Initialize task as pending
+    tasks_storage[task_id] = TaskStatus(status="pending")
+
+    # Start assessment in background
+    asyncio.create_task(run_assessment_background(task_id, task_input))
+
+    return TaskResponse(task_id=task_id, status="pending")
+
+
+@app.get("/task/{task_id}", response_model=TaskStatus)
+async def get_task_status(task_id: str):
+    """A2A protocol: Get task status"""
+    if task_id not in tasks_storage:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    return tasks_storage[task_id]
+
+
+@app.delete("/task/{task_id}")
+async def cancel_task(task_id: str):
+    """A2A protocol: Cancel a task"""
+    if task_id not in tasks_storage:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    tasks_storage[task_id].status = "cancelled"
+    return {"status": "cancelled"}
+
+
+async def run_assessment_background(task_id: str, task_input: TaskInput):
+    """Background task to run assessment (used by A2A protocol)"""
+    try:
+        # Update status to running
+        tasks_storage[task_id].status = "running"
+
+        # Run the assessment
+        result = await execute_assessment(
+            white_agent_url=task_input.white_agent_url,
+            task_category=task_input.task_category,
+            max_tasks=task_input.max_tasks,
+            interactive=task_input.interactive,
+            max_turns=task_input.max_turns,
+            max_user_turns=task_input.max_user_turns
+        )
+
+        # Update status to completed
+        tasks_storage[task_id].status = "completed"
+        tasks_storage[task_id].result = result
+
+    except Exception as e:
+        tasks_storage[task_id].status = "failed"
+        tasks_storage[task_id].error = str(e)
+
+
+async def execute_assessment(
+    white_agent_url: str,
+    task_category: str = "all",
+    max_tasks: Optional[int] = None,
+    interactive: bool = False,
+    max_turns: int = 20,
+    max_user_turns: int = 10
+) -> Dict[str, Any]:
+    """Core assessment logic (shared by both A2A and legacy endpoints)"""
+    # Lazily load assets (this may take time on first request, but won't block startup)
+    assets = get_assets()
+
+    # Load tasks
+    org_type = "b2b"  # Default for now
+
+    if interactive:
+        selected_tasks = assets['TASKS_B2B_INTERACTIVE']
+        schema = assets['B2B_SCHEMA']
+    else:
+        selected_tasks = assets['TASKS_B2B']
+        schema = assets['B2B_SCHEMA']
+
+    # Filter by category
+    if task_category != "all":
+        categories = task_category.split(",")
+        selected_tasks = [t for t in selected_tasks if t["task"] in categories]
+
+    # Limit tasks
+    if max_tasks:
+        selected_tasks = selected_tasks[:max_tasks]
+
+    # Create environment
+    tasks_dict = {t["idx"]: t for t in selected_tasks}
+
+    if interactive:
+        env = assets['InteractiveChatEnv'](
+            tasks=tasks_dict,
+            max_user_turns=max_user_turns,
+            org_type=org_type,
+        )
+    else:
+        env = assets['ChatEnv'](
+            tasks=tasks_dict,
+            org_type=org_type,
+        )
+
+    # Run assessment
+    results = []
+    successful_tasks = 0
+
+    async with httpx.AsyncClient(timeout=300.0) as client:
+        for task in selected_tasks:
+            task_idx = task["idx"]
+            agent_type = "external" if task["task"] in assets['EXTERNAL_FACING_TASKS'] else "internal"
+
+            # Create task message
+            task_message = create_task_message(task, schema, agent_type, max_turns)
+
+            # Interact with white agent
+            result = await interact_with_white_agent(
+                client=client,
+                white_agent_url=white_agent_url,
+                task_message=task_message,
+                env=env,
+                task_idx=task_idx,
+                max_turns=max_turns,
+            )
+
+            result["task_type"] = task["task"]
+            result["ground_truth"] = task["answer"]
+            results.append(result)
+
+            if result.get("reward", 0) == 1:
+                successful_tasks += 1
+
+    # Compute metrics
+    accuracy = successful_tasks / len(selected_tasks) if len(selected_tasks) > 0 else 0
+
+    return {
+        "status": "completed",
+        "metrics": {
+            "accuracy": accuracy,
+            "successful_tasks": successful_tasks,
+            "total_tasks": len(selected_tasks),
+            "pass@1": accuracy,
+        },
+        "results": results,
+    }
+
+
 @app.post("/assess")
 async def run_assessment(config: AssessmentConfig):
-    """Run an assessment on a white agent"""
-
+    """Legacy endpoint: Run an assessment on a white agent (returns result directly)"""
     try:
-        # Lazily load assets (this may take time on first request, but won't block startup)
-        assets = get_assets()
-
-        # Load tasks
-        org_type = "b2b"  # Default for now
-
-        if config.interactive:
-            selected_tasks = assets['TASKS_B2B_INTERACTIVE']
-            schema = assets['B2B_SCHEMA']
-        else:
-            selected_tasks = assets['TASKS_B2B']
-            schema = assets['B2B_SCHEMA']
-
-        # Filter by category
-        if config.task_category != "all":
-            categories = config.task_category.split(",")
-            selected_tasks = [t for t in selected_tasks if t["task"] in categories]
-
-        # Limit tasks
-        if config.max_tasks:
-            selected_tasks = selected_tasks[:config.max_tasks]
-
-        # Create environment
-        tasks_dict = {t["idx"]: t for t in selected_tasks}
-
-        if config.interactive:
-            env = assets['InteractiveChatEnv'](
-                tasks=tasks_dict,
-                max_user_turns=config.max_user_turns,
-                org_type=org_type,
-            )
-        else:
-            env = assets['ChatEnv'](
-                tasks=tasks_dict,
-                org_type=org_type,
-            )
-
-        # Run assessment
-        results = []
-        successful_tasks = 0
-
-        async with httpx.AsyncClient(timeout=300.0) as client:
-            for task in selected_tasks:
-                task_idx = task["idx"]
-                agent_type = "external" if task["task"] in assets['EXTERNAL_FACING_TASKS'] else "internal"
-
-                # Create task message
-                task_message = create_task_message(task, schema, agent_type, config.max_turns)
-
-                # Interact with white agent
-                result = await interact_with_white_agent(
-                    client=client,
-                    white_agent_url=config.white_agent_url,
-                    task_message=task_message,
-                    env=env,
-                    task_idx=task_idx,
-                    max_turns=config.max_turns,
-                )
-
-                result["task_type"] = task["task"]
-                result["ground_truth"] = task["answer"]
-                results.append(result)
-
-                if result.get("reward", 0) == 1:
-                    successful_tasks += 1
-
-        # Compute metrics
-        accuracy = successful_tasks / len(selected_tasks) if len(selected_tasks) > 0 else 0
-
-        return {
-            "status": "completed",
-            "metrics": {
-                "accuracy": accuracy,
-                "successful_tasks": successful_tasks,
-                "total_tasks": len(selected_tasks),
-                "pass@1": accuracy,
-            },
-            "results": results,
-        }
+        result = await execute_assessment(
+            white_agent_url=config.white_agent_url,
+            task_category=config.task_category,
+            max_tasks=config.max_tasks,
+            interactive=config.interactive,
+            max_turns=config.max_turns,
+            max_user_turns=config.max_user_turns
+        )
+        return result
 
     except Exception as e:
         return JSONResponse(
